@@ -1,9 +1,8 @@
-from src.f1_data import get_race_telemetry, load_race_session
-from src.animation import create_animation
+from src.f1_data import get_race_telemetry, get_driver_colors, load_race_session
+from src.arcade_replay import run_arcade_replay
 import sys
-import matplotlib.pyplot as plt
 
-def main(year=None, round_number=None, output_file="output_animation.mp4", playback_speed=1):
+def main(year=None, round_number=None, playback_speed=1):
 
   session = load_race_session(year, round_number)
   print(f"Loaded session: {session.event['EventName']} - {session.event['RoundNumber']}")
@@ -11,12 +10,6 @@ def main(year=None, round_number=None, output_file="output_animation.mp4", playb
   # Get the drivers who participated in the race
 
   race_telemetry = get_race_telemetry(session)
-
-  # TODO: Remove after testing
-
-  # Trim to 500 frames for testing
-
-  race_telemetry = race_telemetry[:100]
 
   # Get example lap for track layout
 
@@ -29,23 +22,33 @@ def main(year=None, round_number=None, output_file="output_animation.mp4", playb
     for num in drivers
   } 
 
-  still_frame = False
+  driver_colors = get_driver_colors(session)
 
-  if "--generate-track" in sys.argv:
-    still_frame = True
-
-  create_animation(race_telemetry, example_lap, driver_codes, output_file, playback_speed, still_frame=still_frame)
+  run_arcade_replay(
+    frames=race_telemetry,
+    example_lap=example_lap,
+    drivers=drivers,
+    playback_speed=1.0,
+    driver_colors=driver_colors,
+    title=f"{session.event['EventName']} - Race"
+  )
 
 if __name__ == "__main__":
 
   # Get the year and round number from user input
 
-  year = 2024
+  if "--year" in sys.argv:
+    year_index = sys.argv.index("--year") + 1
+    year = int(sys.argv[year_index])
+  else:
+    year = 2025  # Default year
 
-  round_number = 22
+  if "--round" in sys.argv:
+    round_index = sys.argv.index("--round") + 1
+    round_number = int(sys.argv[round_index])
+  else:
+    round_number = 13  # Default round number
 
-  playback_speed = 10
+  playback_speed = 1
 
-  output_file="output_animation.mp4"
-
-  main(year, round_number, output_file, playback_speed)
+  main(year, round_number, playback_speed)
