@@ -393,6 +393,7 @@ class F1RaceReplayWindow(arcade.Window):
             "[←/→]    Rewind / FastForward",
             "[↑/↓]    Speed +/- (0.5x, 1x, 2x, 4x)",
             "[R]       Restart",
+            "[B]       Toggle Progress Bar",
         ]
         
         for i, line in enumerate(legend_lines):
@@ -440,6 +441,8 @@ class F1RaceReplayWindow(arcade.Window):
         elif symbol == arcade.key.R:
             self.frame_index = 0.0
             self.playback_speed = 1.0
+        elif symbol == arcade.key.B:
+            self.progress_bar_comp.toggle_visibility() # toggle progress bar visibility
 
     def on_mouse_press(self, x: float, y: float, button: int, modifiers: int):
         # forward to components; stop at first that handled it
