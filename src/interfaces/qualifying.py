@@ -2,11 +2,11 @@ import arcade
 import threading
 import time
 import numpy as np
-from src.ui_components import build_track_from_example_lap, LapTimeLeaderboardComponent, QualifyingSegmentSelectorComponent, RaceControlsComponent
-from src.ui_components import build_track_from_example_lap, LapTimeLeaderboardComponent, QualifyingSegmentSelectorComponent, LegendComponent
+from src.ui_components import build_track_from_example_lap, LapTimeLeaderboardComponent, QualifyingSegmentSelectorComponent, RaceControlsComponent, draw_finish_line
 from src.f1_data import get_driver_quali_telemetry
 from src.f1_data import FPS
 from src.lib.time import format_time
+from src.ui_components import LegendComponent
 
 SCREEN_WIDTH = 1280
 SCREEN_HEIGHT = 720
@@ -585,14 +585,14 @@ class QualifyingReplay(arcade.Window):
                     inner_world = getattr(self, "world_inner_points", None) or list(zip(self.x_inner, self.y_inner))
                     outer_world = getattr(self, "world_outer_points", None) or list(zip(self.x_outer, self.y_outer))
 
-                    inner_pts = [world_to_map(x, y) for x, y in inner_world if x is not None and y is not None]
-                    outer_pts = [world_to_map(x, y) for x, y in outer_world if x is not None and y is not None]
-
+                    self.inner_pts = [world_to_map(x, y) for x, y in inner_world if x is not None and y is not None]
+                    self.outer_pts = [world_to_map(x, y) for x, y in outer_world if x is not None and y is not None]
                     try:
-                        if len(inner_pts) > 1:
-                            arcade.draw_line_strip(inner_pts, arcade.color.GRAY, 2)
-                        if len(outer_pts) > 1:
-                            arcade.draw_line_strip(outer_pts, arcade.color.GRAY, 2)
+                        if len(self.inner_pts) > 1:
+                            arcade.draw_line_strip(self.inner_pts, arcade.color.GRAY, 2)
+                        if len(self.outer_pts) > 1:
+                            arcade.draw_line_strip(self.outer_pts, arcade.color.GRAY, 2)
+                        draw_finish_line(self, 'Q')
                     except Exception as e:
                         print("Circuit draw error:", e)
 
