@@ -830,6 +830,7 @@ class ControlsPopupComponent(BaseComponent):
             "[R]    Restart",
             "[D]    Toggle DRS Zones",
             "[B]    Toggle Progress Bar",
+            "[L]    Toggle Driver Labels",
             "[H]    Toggle Help Popup",
         ]
         
