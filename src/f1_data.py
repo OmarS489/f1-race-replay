@@ -758,7 +758,7 @@ def _process_quali_driver(args):
         except ValueError:
             driver_telemetry_data[segment] = {"frames": [], "track_statuses": []}
 
-    print(f"Finished processing qualifying telemetry for driver: {driver_code}, {session.get_driver(driver_code)["FullName"]},")
+    print(f"Finished processing qualifying telemetry for driver: {driver_code}, {session.get_driver(driver_code)['FullName']},")
     return {
         "driver_code": driver_code,
         "driver_full_name": session.get_driver(driver_code)["FullName"],
