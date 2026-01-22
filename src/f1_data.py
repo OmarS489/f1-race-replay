@@ -7,11 +7,173 @@ import numpy as np
 import json
 import pickle
 from datetime import timedelta
+from typing import Optional, Dict, List, Any
 
 from src.lib.tyres import get_tyre_compound_int
 from src.lib.time import parse_time_string, format_time
 
 import pandas as pd
+
+
+def extract_pit_stops(session) -> List[Dict[str, Any]]:
+    """Extract pit stop data from session laps."""
+    pit_stops = []
+
+    for driver_no in session.drivers:
+        try:
+            driver_code = session.get_driver(driver_no)["Abbreviation"]
+            driver_laps = session.laps.pick_drivers(driver_no)
+
+            if driver_laps.empty:
+                continue
+
+            # Find laps where pit occurred (PitInTime is not NaT)
+            for _, lap in driver_laps.iterrows():
+                if pd.notna(lap.get('PitInTime')) and pd.notna(lap.get('PitOutTime')):
+                    pit_in_time = lap['PitInTime']
+                    pit_out_time = lap['PitOutTime']
+
+                    # Calculate pit stop duration
+                    if isinstance(pit_in_time, timedelta) and isinstance(pit_out_time, timedelta):
+                        duration = (pit_out_time - pit_in_time).total_seconds()
+                    else:
+                        duration = 0
+
+                    # Get compound info
+                    compound_from = get_tyre_compound_int(str(lap.get('Compound', 'UNKNOWN')))
+
+                    # Try to get the next lap's compound
+                    lap_num = lap['LapNumber']
+                    next_lap = driver_laps[driver_laps['LapNumber'] == lap_num + 1]
+                    if not next_lap.empty:
+                        compound_to = get_tyre_compound_int(str(next_lap.iloc[0].get('Compound', 'UNKNOWN')))
+                    else:
+                        compound_to = compound_from
+
+                    pit_stops.append({
+                        'driver': driver_code,
+                        'lap': int(lap_num),
+                        'duration': round(duration, 3),
+                        'compound_from': compound_from,
+                        'compound_to': compound_to,
+                        'pit_in_time': pit_in_time.total_seconds() if isinstance(pit_in_time, timedelta) else 0,
+                    })
+        except Exception as e:
+            print(f"Error extracting pit stops for driver {driver_no}: {e}")
+            continue
+
+    # Sort by pit_in_time
+    pit_stops.sort(key=lambda x: x.get('pit_in_time', 0))
+    return pit_stops
+
+
+def extract_lap_times(session) -> Dict[str, Dict[int, float]]:
+    """Extract lap times for all drivers."""
+    lap_times = {}
+
+    for driver_no in session.drivers:
+        try:
+            driver_code = session.get_driver(driver_no)["Abbreviation"]
+            driver_laps = session.laps.pick_drivers(driver_no)
+
+            if driver_laps.empty:
+                continue
+
+            lap_times[driver_code] = {}
+
+            for _, lap in driver_laps.iterrows():
+                lap_num = int(lap['LapNumber'])
+                lap_time = lap.get('LapTime')
+
+                if pd.notna(lap_time) and isinstance(lap_time, timedelta):
+                    lap_times[driver_code][lap_num] = round(lap_time.total_seconds(), 3)
+        except Exception as e:
+            print(f"Error extracting lap times for driver {driver_no}: {e}")
+            continue
+
+    return lap_times
+
+
+def extract_sector_times(session) -> Dict[str, Dict[int, Dict[str, Optional[float]]]]:
+    """Extract sector times for all drivers per lap."""
+    sector_times = {}
+
+    for driver_no in session.drivers:
+        try:
+            driver_code = session.get_driver(driver_no)["Abbreviation"]
+            driver_laps = session.laps.pick_drivers(driver_no)
+
+            if driver_laps.empty:
+                continue
+
+            sector_times[driver_code] = {}
+
+            for _, lap in driver_laps.iterrows():
+                lap_num = int(lap['LapNumber'])
+
+                s1 = lap.get('Sector1Time')
+                s2 = lap.get('Sector2Time')
+                s3 = lap.get('Sector3Time')
+
+                sector_times[driver_code][lap_num] = {
+                    's1': round(s1.total_seconds(), 3) if pd.notna(s1) and isinstance(s1, timedelta) else None,
+                    's2': round(s2.total_seconds(), 3) if pd.notna(s2) and isinstance(s2, timedelta) else None,
+                    's3': round(s3.total_seconds(), 3) if pd.notna(s3) and isinstance(s3, timedelta) else None,
+                }
+        except Exception as e:
+            print(f"Error extracting sector times for driver {driver_no}: {e}")
+            continue
+
+    return sector_times
+
+
+def calculate_tyre_stints(session) -> Dict[str, List[Dict[str, Any]]]:
+    """Calculate tyre stints (compound, start lap, end lap) for each driver."""
+    stints = {}
+
+    for driver_no in session.drivers:
+        try:
+            driver_code = session.get_driver(driver_no)["Abbreviation"]
+            driver_laps = session.laps.pick_drivers(driver_no)
+
+            if driver_laps.empty:
+                continue
+
+            driver_stints = []
+            current_stint = None
+
+            for _, lap in driver_laps.sort_values('LapNumber').iterrows():
+                compound = str(lap.get('Compound', 'UNKNOWN'))
+                compound_int = get_tyre_compound_int(compound)
+                lap_num = int(lap['LapNumber'])
+
+                if current_stint is None:
+                    current_stint = {
+                        'compound': compound_int,
+                        'compound_name': compound,
+                        'start_lap': lap_num,
+                        'end_lap': lap_num,
+                    }
+                elif current_stint['compound'] == compound_int:
+                    current_stint['end_lap'] = lap_num
+                else:
+                    driver_stints.append(current_stint)
+                    current_stint = {
+                        'compound': compound_int,
+                        'compound_name': compound,
+                        'start_lap': lap_num,
+                        'end_lap': lap_num,
+                    }
+
+            if current_stint is not None:
+                driver_stints.append(current_stint)
+
+            stints[driver_code] = driver_stints
+        except Exception as e:
+            print(f"Error calculating stints for driver {driver_no}: {e}")
+            continue
+
+    return stints
 
 def enable_cache():
     # Check if cache folder exists
@@ -27,7 +189,7 @@ DT = 1 / FPS
 def _process_single_driver(args):
     """Process telemetry data for a single driver - must be top-level for multiprocessing"""
     driver_no, session, driver_code = args
-    
+
     print(f"Getting telemetry for driver: {driver_code}")
 
     laps_driver = session.laps.pick_drivers(driver_no)
@@ -48,23 +210,39 @@ def _process_single_driver(args):
     drs_all = []
     throttle_all = []
     brake_all = []
+    tyre_age_all = []  # Track tyre age (laps on current set)
+    in_pit_all = []    # Track if driver is in pit lane
 
     total_dist_so_far = 0.0
 
+    # Track stint information for tyre age calculation
+    current_compound = None
+    stint_start_lap = 1
+
     # iterate laps in order
-    for _, lap in laps_driver.iterlaps():
+    for _, lap in laps_driver.sort_values('LapNumber').iterlaps():
         # get telemetry for THIS lap only
         lap_tel = lap.get_telemetry()
         lap_number = lap.LapNumber
-        tyre_compund_as_int = get_tyre_compound_int(lap.Compound)
+        tyre_compound_as_int = get_tyre_compound_int(lap.Compound)
 
         if lap_tel.empty:
             continue
 
+        # Calculate tyre age
+        if current_compound is None or current_compound != tyre_compound_as_int:
+            current_compound = tyre_compound_as_int
+            stint_start_lap = lap_number
+
+        tyre_age = int(lap_number - stint_start_lap + 1)
+
+        # Check if driver is in pit lane this lap
+        is_pit_lap = pd.notna(lap.get('PitInTime')) or pd.notna(lap.get('PitOutTime'))
+
         t_lap = lap_tel["SessionTime"].dt.total_seconds().to_numpy()
         x_lap = lap_tel["X"].to_numpy()
         y_lap = lap_tel["Y"].to_numpy()
-        d_lap = lap_tel["Distance"].to_numpy()          
+        d_lap = lap_tel["Distance"].to_numpy()
         rd_lap = lap_tel["RelativeDistance"].to_numpy()
         speed_kph_lap = lap_tel["Speed"].to_numpy()
         gear_lap = lap_tel["nGear"].to_numpy()
@@ -81,36 +259,40 @@ def _process_single_driver(args):
         race_dist_all.append(race_d_lap)
         rel_dist_all.append(rd_lap)
         lap_numbers.append(np.full_like(t_lap, lap_number))
-        tyre_compounds.append(np.full_like(t_lap, tyre_compund_as_int))
+        tyre_compounds.append(np.full_like(t_lap, tyre_compound_as_int))
         speed_all.append(speed_kph_lap)
         gear_all.append(gear_lap)
         drs_all.append(drs_lap)
         throttle_all.append(throttle_lap)
         brake_all.append(brake_lap)
+        tyre_age_all.append(np.full_like(t_lap, tyre_age))
+        in_pit_all.append(np.full_like(t_lap, 1.0 if is_pit_lap else 0.0))
 
     if not t_all:
         return None
 
     # Concatenate all arrays at once for better performance
-    all_arrays = [t_all, x_all, y_all, race_dist_all, rel_dist_all, 
-                  lap_numbers, tyre_compounds, speed_all, gear_all, drs_all]
-    
+    all_arrays = [t_all, x_all, y_all, race_dist_all, rel_dist_all,
+                  lap_numbers, tyre_compounds, speed_all, gear_all, drs_all,
+                  tyre_age_all, in_pit_all]
+
     t_all, x_all, y_all, race_dist_all, rel_dist_all, lap_numbers, \
-    tyre_compounds, speed_all, gear_all, drs_all = [np.concatenate(arr) for arr in all_arrays]
+    tyre_compounds, speed_all, gear_all, drs_all, tyre_age_all, in_pit_all = [np.concatenate(arr) for arr in all_arrays]
 
     # Sort all arrays by time in one operation
     order = np.argsort(t_all)
-    all_data = [t_all, x_all, y_all, race_dist_all, rel_dist_all, 
-                lap_numbers, tyre_compounds, speed_all, gear_all, drs_all]
-    
+    all_data = [t_all, x_all, y_all, race_dist_all, rel_dist_all,
+                lap_numbers, tyre_compounds, speed_all, gear_all, drs_all,
+                tyre_age_all, in_pit_all]
+
     t_all, x_all, y_all, race_dist_all, rel_dist_all, lap_numbers, \
-    tyre_compounds, speed_all, gear_all, drs_all = [arr[order] for arr in all_data]
+    tyre_compounds, speed_all, gear_all, drs_all, tyre_age_all, in_pit_all = [arr[order] for arr in all_data]
 
     throttle_all = np.concatenate(throttle_all)[order]
     brake_all = np.concatenate(brake_all)[order]
 
     print(f"Completed telemetry for driver: {driver_code}")
-    
+
     return {
         "code": driver_code,
         "data": {
@@ -118,7 +300,7 @@ def _process_single_driver(args):
             "x": x_all,
             "y": y_all,
             "dist": race_dist_all,
-            "rel_dist": rel_dist_all,                   
+            "rel_dist": rel_dist_all,
             "lap": lap_numbers,
             "tyre": tyre_compounds,
             "speed": speed_all,
@@ -126,6 +308,8 @@ def _process_single_driver(args):
             "drs": drs_all,
             "throttle": throttle_all,
             "brake": brake_all,
+            "tyre_age": tyre_age_all,
+            "in_pit": in_pit_all,
         },
         "t_min": t_all.min(),
         "t_max": t_all.max(),
@@ -228,7 +412,7 @@ def get_race_telemetry(session, session_type='R'):
         # ensure sorted by time
         order = np.argsort(t)
         t_sorted = t[order]
-        
+
         # Vectorize all resampling in one operation for speed
         arrays_to_resample = [
             data["x"][order],
@@ -242,12 +426,15 @@ def get_race_telemetry(session, session_type='R'):
             data["drs"][order],
             data["throttle"][order],
             data["brake"][order],
+            data["tyre_age"][order],
+            data["in_pit"][order],
         ]
-        
+
         resampled = [np.interp(timeline, t_sorted, arr) for arr in arrays_to_resample]
         x_resampled, y_resampled, dist_resampled, rel_dist_resampled, lap_resampled, \
-        tyre_resampled, speed_resampled, gear_resampled, drs_resampled, throttle_resampled, brake_resampled = resampled
- 
+        tyre_resampled, speed_resampled, gear_resampled, drs_resampled, throttle_resampled, \
+        brake_resampled, tyre_age_resampled, in_pit_resampled = resampled
+
         resampled_data[code] = {
             "t": timeline,
             "x": x_resampled,
@@ -260,7 +447,9 @@ def get_race_telemetry(session, session_type='R'):
             "gear": gear_resampled,
             "drs": drs_resampled,
             "throttle": throttle_resampled,
-            "brake": brake_resampled
+            "brake": brake_resampled,
+            "tyre_age": tyre_age_resampled,
+            "in_pit": in_pit_resampled,
         }
 
     # 4. Incorporate track status data into the timeline (for safety car, VSC, etc.)
@@ -326,15 +515,19 @@ def get_race_telemetry(session, session_type='R'):
     # 5. Build the frames + LIVE LEADERBOARD
     frames = []
     num_frames = len(timeline)
-    
+
     # Pre-extract data references for faster access
-    driver_codes = list(resampled_data.keys())
-    driver_arrays = {code: resampled_data[code] for code in driver_codes}
+    driver_codes_list = list(resampled_data.keys())
+    driver_arrays = {code: resampled_data[code] for code in driver_codes_list}
+
+    # Calculate average speed for gap estimation (approximate, used for time-based gaps)
+    # We'll use ~200 km/h as an average F1 race speed for gap calculations
+    AVG_SPEED_MS = 200 * 1000 / 3600  # ~55.5 m/s
 
     for i in range(num_frames):
         t = timeline[i]
         snapshot = []
-        for code in driver_codes:
+        for code in driver_codes_list:
             d = driver_arrays[code]
             snapshot.append({
                 "code": code,
@@ -349,6 +542,8 @@ def get_race_telemetry(session, session_type='R'):
                 "drs": int(d['drs'][i]),
                 "throttle": float(d['throttle'][i]),
                 "brake": float(d['brake'][i]),
+                "tyre_age": int(round(d['tyre_age'][i])),
+                "in_pit": float(d['in_pit'][i]) > 0.5,
             })
 
         # If for some reason we have no drivers at this instant
@@ -361,21 +556,39 @@ def get_race_telemetry(session, session_type='R'):
 
         leader = snapshot[0]
         leader_lap = leader["lap"]
+        leader_dist = leader["dist"]
 
-        # TODO: This 5c. step seems futile currently as we are not using gaps anywhere, and it doesn't even comput the gaps. I think I left this in when removing the "gaps" feature that was half-finished during the initial development.
-
-        # 5c. Compute gap to car in front in SECONDS
+        # 5c. Compute gaps (to leader and to car ahead)
         frame_data = {}
 
         for idx, car in enumerate(snapshot):
             code = car["code"]
             position = idx + 1
 
-            # include speed, gear, drs_active in frame driver dict
+            # Calculate gap to leader (in seconds and meters)
+            dist_to_leader = leader_dist - car["dist"]
+
+            # Use actual speed for more accurate gap calculation (if speed > 0)
+            car_speed_ms = car["speed"] * 1000 / 3600 if car["speed"] > 10 else AVG_SPEED_MS
+            gap_to_leader_sec = dist_to_leader / car_speed_ms if car_speed_ms > 0 else 0
+
+            # Calculate interval to car ahead
+            if position == 1:
+                interval_sec = None
+                interval_dist = None
+            else:
+                car_ahead = snapshot[idx - 1]
+                dist_to_ahead = car_ahead["dist"] - car["dist"]
+                interval_dist = dist_to_ahead
+                interval_sec = dist_to_ahead / car_speed_ms if car_speed_ms > 0 else 0
+
+            # Handle lapped cars - add lap indicator
+            laps_behind = leader_lap - car["lap"]
+
             frame_data[code] = {
                 "x": car["x"],
                 "y": car["y"],
-                "dist": car["dist"],    
+                "dist": car["dist"],
                 "lap": car["lap"],
                 "rel_dist": round(car["rel_dist"], 4),
                 "tyre": car["tyre"],
@@ -385,6 +598,14 @@ def get_race_telemetry(session, session_type='R'):
                 "drs": car['drs'],
                 "throttle": car['throttle'],
                 "brake": car['brake'],
+                "tyre_age": car['tyre_age'],
+                "in_pit": car['in_pit'],
+                # Gap data
+                "gap_to_leader": round(gap_to_leader_sec, 3) if position > 1 else None,
+                "gap_to_leader_dist": round(dist_to_leader, 1) if position > 1 else None,
+                "interval": round(interval_sec, 3) if interval_sec is not None else None,
+                "interval_dist": round(interval_dist, 1) if interval_dist is not None else None,
+                "laps_behind": laps_behind if laps_behind > 0 else None,
             }
 
         weather_snapshot = {}
@@ -412,29 +633,39 @@ def get_race_telemetry(session, session_type='R'):
             frame_payload["weather"] = weather_snapshot
 
         frames.append(frame_payload)
-    print("completed telemetry extraction...")
+    print("Completed telemetry frame extraction...")
+    print("Extracting additional race data (pit stops, lap times, sectors, stints)...")
+
+    # Extract additional race metadata
+    pit_stops = extract_pit_stops(session)
+    lap_times = extract_lap_times(session)
+    sector_times = extract_sector_times(session)
+    tyre_stints = calculate_tyre_stints(session)
+
     print("Saving to cache file...")
     # If computed_data/ directory doesn't exist, create it
     if not os.path.exists("computed_data"):
         os.makedirs("computed_data")
 
-    # Save using pickle (10-100x faster than JSON)
-    with open(f"computed_data/{event_name}_{cache_suffix}_telemetry.pkl", "wb") as f:
-        pickle.dump({
-            "frames": frames,
-            "driver_colors": get_driver_colors(session),
-            "track_statuses": formatted_track_statuses,
-            "total_laps": int(max_lap_number),
-        }, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-    print("Saved Successfully!")
-    print("The replay should begin in a new window shortly")
-    return {
+    result_data = {
         "frames": frames,
         "driver_colors": get_driver_colors(session),
         "track_statuses": formatted_track_statuses,
         "total_laps": int(max_lap_number),
+        # New metadata
+        "pit_stops": pit_stops,
+        "lap_times": lap_times,
+        "sector_times": sector_times,
+        "tyre_stints": tyre_stints,
     }
+
+    # Save using pickle (10-100x faster than JSON)
+    with open(f"computed_data/{event_name}_{cache_suffix}_telemetry.pkl", "wb") as f:
+        pickle.dump(result_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    print("Saved Successfully!")
+    print("The replay should begin in a new window shortly")
+    return result_data
 
 
 def get_qualifying_results(session):

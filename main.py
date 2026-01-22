@@ -4,8 +4,15 @@ from src.arcade_replay import run_arcade_replay
 from src.interfaces.qualifying import run_qualifying_replay
 import sys
 from src.cli.race_selection import cli_load
-from src.gui.race_selection import RaceSelectionWindow
-from PySide6.QtWidgets import QApplication
+
+
+def run_web_server(host: str = "0.0.0.0", port: int = 8000):
+    """Start the FastAPI web server for browser-based viewing."""
+    import uvicorn
+    print(f"Starting F1 Race Replay web server at http://{host}:{port}")
+    print("Open http://localhost:5173 for the frontend (run 'npm run dev' in frontend/)")
+    print("API docs available at http://localhost:8000/docs")
+    uvicorn.run("backend.app.main:app", host=host, port=port, reload=True)
 
 def main(year=None, round_number=None, playback_speed=1, session_type='R', visible_hud=True, ready_file=None):
   print(f"Loading F1 {year} Round {round_number} Session '{session_type}'")
@@ -102,12 +109,27 @@ def main(year=None, round_number=None, playback_speed=1, session_type='R', visib
 
 if __name__ == "__main__":
 
-  if "--cli" in sys.argv:
-    # Run the CLI
+  # Web server mode - browser-based viewing
+  if "--web" in sys.argv:
+    host = "0.0.0.0"
+    port = 8000
+    if "--host" in sys.argv:
+      idx = sys.argv.index("--host") + 1
+      if idx < len(sys.argv):
+        host = sys.argv[idx]
+    if "--port" in sys.argv:
+      idx = sys.argv.index("--port") + 1
+      if idx < len(sys.argv):
+        port = int(sys.argv[idx])
+    run_web_server(host=host, port=port)
+    sys.exit(0)
 
+  # CLI mode
+  if "--cli" in sys.argv:
     cli_load()
     sys.exit(0)
 
+  # Parse year and round
   if "--year" in sys.argv:
     year_index = sys.argv.index("--year") + 1
     year = int(sys.argv[year_index])
@@ -120,15 +142,19 @@ if __name__ == "__main__":
   else:
     round_number = 12  # Default round number
 
+  # List commands
   if "--list-rounds" in sys.argv:
     list_rounds(year)
+    sys.exit(0)
   elif "--list-sprints" in sys.argv:
     list_sprints(year)
-  else:
-    playback_speed = 1
+    sys.exit(0)
 
+  playback_speed = 1
+
+  # Direct viewer mode
   if "--viewer" in sys.argv:
-  
+
     visible_hud = True
     if "--no-hud" in sys.argv:
       visible_hud = False
@@ -144,8 +170,11 @@ if __name__ == "__main__":
         ready_file = sys.argv[idx]
 
     main(year, round_number, playback_speed, session_type=session_type, visible_hud=visible_hud, ready_file=ready_file)
+    sys.exit(0)
 
-  # Run the GUI
+  # Default: Run the GUI (PySide6)
+  from src.gui.race_selection import RaceSelectionWindow
+  from PySide6.QtWidgets import QApplication
 
   app = QApplication(sys.argv)
   win = RaceSelectionWindow()

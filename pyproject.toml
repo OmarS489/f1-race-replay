@@ -1,0 +1,22 @@
+[project]
+name = "f1-race-replay"
+version = "0.1.0"
+description = "F1 Race Replay - Visualize Formula 1 race telemetry and replays"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastf1",
+    "pandas",
+    "matplotlib",
+    "numpy",
+    "arcade",
+    "pyglet",
+    "pyside6",
+    "questionary",
+    "rich",
+    "fastapi",
+    "uvicorn[standard]",
+]
+
+[project.scripts]
+f1-replay = "main:main"
